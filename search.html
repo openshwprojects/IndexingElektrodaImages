@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Elektroda AI Image Tag Search</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .filters { margin-bottom: 10px; }
+    .filters input[type="text"] { width: 300px; }
+    .filters label { margin-right: 10px; }
+    .image-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .thumb {
+      border: 1px solid #ccc;
+      padding: 5px;
+      cursor: pointer;
+      width: 360px;
+      position: relative;
+    }
+    .thumb img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+    .thumb.expanded { width: 100%; }
+    .thumb.expanded img { max-width: 1200px; }
+    .overlay-bottom {
+      position: absolute;
+      bottom: 5px;
+      left: 5px;
+      right: 5px;
+      background-color: rgba(0,0,0,0.5);
+      color: white;
+      padding: 3px 6px;
+      font-size: 0.75em;
+      font-weight: bold;
+      border-radius: 4px;
+      line-height: 1.4em;
+      word-wrap: break-word;
+    }
+    .overlay-bottom .match { color: #00ff00; }
+    .overlay-bottom .nomatch { color: #ff5555; }
+    .tags { font-size: 0.9em; margin-top: 5px; padding-left: 15px; }
+    .hidden { display: none; }
+    #generalStats, #searchStats { margin: 10px 0; font-size: 0.9em; color: #333; }
+    #generalStats { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Elektroda AI Image Tag Search</h1>
+  <div id="generalStats">Loading stats...</div>
+
+  <form class="filters" id="searchForm">
+    <label>Must have tags: <input type="text" id="mustHave" placeholder="e.g. camera security outdoor"></label>
+    <label>Must not have tags: <input type="text" id="mustNotHave" placeholder="e.g. microphone speaker"></label>
+    <br><br>
+    <label><input type="checkbox" id="wholeWords" checked> Match only whole words</label>
+    <br><br>
+    <label>Show results:
+      <select id="resultCount">
+        <option value="5">5</option>
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="250">250</option>
+      </select>
+    </label>
+    <br><br>
+    <div id="models"></div>
+    <br>
+    <button type="submit">Search</button>
+    <div id="searchStats"></div>
+  </form>
+
+  <div class="image-grid" id="results"></div>
+
+  <script>
+    let data = [];
+    let allModels = new Set();
+    let indexableImages = [];
+    let modelUsageCount = {};
+
+    fetch('work.json')
+      .then(res => res.json())
+      .then(json => {
+        data = json.images || [];
+        indexableImages = data.filter(img => img.taggroups && Object.keys(img.taggroups).length > 0);
+        for (let img of indexableImages) {
+          for (let model in img.taggroups) {
+            allModels.add(model);
+            if (!modelUsageCount[model]) modelUsageCount[model] = 0;
+            modelUsageCount[model]++;
+          }
+        }
+        renderModelCheckboxes();
+        updateGeneralStats();
+        applyFilters();
+      });
+
+    function renderModelCheckboxes() {
+      const container = document.getElementById('models');
+      container.innerHTML = '';
+      Array.from(allModels).sort().forEach(model => {
+        const id = `model_${model.replace(/[:.]/g, "_")}`;
+        container.innerHTML += `<label><input type="checkbox" id="${id}" checked> ${model}</label> `;
+      });
+    }
+
+    function updateGeneralStats() {
+      const totalImages = data.length;
+      const indexable = indexableImages.length;
+      const totalTagGroups = indexableImages.reduce((sum, img) => sum + Object.keys(img.taggroups).length, 0);
+      const lines = [];
+      lines.push(`${totalImages} images (${indexable} indexable - at least one tag group)`);
+      lines.push(`Total ${totalTagGroups} tag groups`);
+      const modelLines = Object.entries(modelUsageCount)
+        .sort((a, b) => b[1] - a[1])
+        .map(([model, count]) => `Model ${model} has ${count} images`);
+      lines.push(...modelLines);
+      document.getElementById('generalStats').innerText = lines.join('\n');
+    }
+
+    function getCheckedModels() {
+      return Array.from(allModels).filter(model => {
+        const id = `model_${model.replace(/[:.]/g, "_")}`;
+        return document.getElementById(id)?.checked;
+      });
+    }
+
+    function matchesTag(allTags, tag, wholeWords) {
+      if (wholeWords) {
+        const regex = new RegExp(`\\b${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        return regex.test(allTags);
+      }
+      return allTags.includes(tag);
+    }
+
+    function applyFilters() {
+      const must = document.getElementById('mustHave').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const mustNot = document.getElementById('mustNotHave').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const limit = parseInt(document.getElementById('resultCount').value);
+      const models = getCheckedModels();
+      const wholeWords = document.getElementById('wholeWords').checked;
+
+      const resultContainer = document.getElementById('results');
+      resultContainer.innerHTML = '';
+
+      let matching = [];
+
+      for (let img of indexableImages) {
+        let allTags = models.map(model => img.taggroups[model] || '').join('; ').toLowerCase();
+        if (must.length && !must.every(tag => matchesTag(allTags, tag, wholeWords))) continue;
+        if (mustNot.some(tag => matchesTag(allTags, tag, wholeWords))) continue;
+        matching.push(img);
+      }
+
+      const shown = matching.slice(0, limit);
+      document.getElementById('searchStats').textContent = `Showing ${shown.length} of ${matching.length} matching images`;
+
+      for (let img of shown) {
+        const div = document.createElement('div');
+        div.className = 'thumb';
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay-bottom';
+        const overlaySpans = [];
+
+        for (let model of models) {
+          const span = document.createElement('span');
+          span.textContent = model;
+          const groupTags = (img.taggroups[model] || '').toLowerCase();
+          let isMatch = true;
+          if (must.length && !must.every(tag => matchesTag(groupTags, tag, wholeWords))) isMatch = false;
+          if (mustNot.some(tag => matchesTag(groupTags, tag, wholeWords))) isMatch = false;
+          span.className = isMatch ? 'match' : 'nomatch';
+          overlaySpans.push(span.outerHTML);
+        }
+
+        overlay.innerHTML = overlaySpans.join(', ');
+        div.innerHTML = `<img src="${img.url}"><div class="tags hidden"></div>`;
+        div.appendChild(overlay);
+        div.onclick = () => toggleExpand(div, img);
+        resultContainer.appendChild(div);
+      }
+    }
+
+    function toggleExpand(div, img) {
+      const isExpanded = div.classList.toggle('expanded');
+      const tagDiv = div.querySelector('.tags');
+      if (isExpanded) {
+        const models = getCheckedModels();
+        let content = '';
+        for (let model of models) {
+          if (img.taggroups[model]) {
+            content += `<strong>${model}:</strong> ${img.taggroups[model]}<br>`;
+          }
+        }
+        if (content) {
+          const detailDiv = document.createElement('div');
+          detailDiv.innerHTML = content;
+          tagDiv.innerHTML = '';
+          tagDiv.appendChild(detailDiv);
+          tagDiv.innerHTML += "<br><br>";
+          tagDiv.classList.remove('hidden');
+        }
+        const rect = div.getBoundingClientRect();
+        const top = rect.top + window.scrollY - (window.innerHeight / 2) + (rect.height / 2);
+        window.scrollTo({ top, behavior: 'smooth' });
+      } else {
+        tagDiv.classList.add('hidden');
+      }
+    }
+
+    document.getElementById('searchForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      applyFilters();
+    });
+  </script>
+</body>
+</html>
