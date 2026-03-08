@@ -270,30 +270,40 @@
 
     .lb-tags {
       width: 80vw;
-      max-height: 16vh;
+      max-height: 22vh;
       overflow-y: auto;
       background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 10px;
       padding: 14px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px;
     }
     .lb-tags::-webkit-scrollbar { width: 6px; }
     .lb-tags::-webkit-scrollbar-track { background: transparent; }
     .lb-tags::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
 
-    .lb-tag-row {
-      font-size: 0.82rem;
-      line-height: 1.5;
+    .lb-tag-col {
+      font-size: 0.78rem;
+      line-height: 1.55;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      padding-right: 10px;
     }
-    .lb-tag-row .model-name {
+    .lb-tag-col:last-child { border-right: none; padding-right: 0; }
+    .lb-tag-col .model-name {
       font-weight: 700;
       color: #7f5af0;
-      margin-right: 6px;
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.82rem;
     }
-    .lb-tag-row .tag-text { color: #bbbbd0; }
+    .lb-tag-col .tag-text { color: #bbbbd0; }
+    .tag-freq-all     { color: #1db954; font-weight: 700; }
+    .tag-freq-almost  { color: #4cd97b; }
+    .tag-freq-neutral { color: #bbbbd0; }
+    .tag-freq-low     { color: #e87070; }
+    .tag-freq-single  { color: #b33030; }
 
     .lb-counter {
       position: absolute;
@@ -563,21 +573,58 @@
     dom.lbImg.src = img.url;
     dom.lbCounter.textContent = `${lightboxIndex + 1} / ${currentResults.length}`;
 
-    // Build tag rows
+    // Parse tags per model and count cross-model frequency
+    const activeModels = models.filter(m => img.taggroups[m]);
+    const totalModels = activeModels.length;
+
+    // Normalize: split by ; or , or \n, trim, lowercase
+    function parseTags(str) {
+      return str.split(/[;,\n]+/).map(t => t.trim()).filter(Boolean);
+    }
+    function normTag(t) { return t.toLowerCase().replace(/\s+/g, ' '); }
+
+    // Count how many models contain each normalized tag
+    const tagModelCount = {};
+    for (const model of activeModels) {
+      const tags = parseTags(img.taggroups[model]);
+      const seen = new Set();
+      for (const t of tags) {
+        const key = normTag(t);
+        if (!seen.has(key)) {
+          seen.add(key);
+          tagModelCount[key] = (tagModelCount[key] || 0) + 1;
+        }
+      }
+    }
+
+    // Determine CSS class for a tag based on how many models share it
+    function tagClass(count) {
+      if (count >= totalModels) return 'tag-freq-all';
+      if (count >= totalModels - 1 && totalModels >= 2) return 'tag-freq-almost';
+      if (count === 1) return 'tag-freq-single';
+      if (count === 2 && totalModels >= 4) return 'tag-freq-low';
+      return 'tag-freq-neutral';
+    }
+
+    // Build tag columns with colored individual tags
     dom.lbTags.innerHTML = '';
-    for (const model of models) {
-      if (!img.taggroups[model]) continue;
-      const row = document.createElement('div');
-      row.className = 'lb-tag-row';
+    for (const model of activeModels) {
+      const col = document.createElement('div');
+      col.className = 'lb-tag-col';
       const nameSpan = document.createElement('span');
       nameSpan.className = 'model-name';
-      nameSpan.textContent = model + ':';
-      const tagSpan = document.createElement('span');
-      tagSpan.className = 'tag-text';
-      tagSpan.textContent = img.taggroups[model];
-      row.appendChild(nameSpan);
-      row.appendChild(tagSpan);
-      dom.lbTags.appendChild(row);
+      nameSpan.textContent = model;
+      col.appendChild(nameSpan);
+
+      const tags = parseTags(img.taggroups[model]);
+      for (let i = 0; i < tags.length; i++) {
+        const span = document.createElement('span');
+        span.className = tagClass(tagModelCount[normTag(tags[i])]);
+        span.textContent = tags[i];
+        col.appendChild(span);
+        if (i < tags.length - 1) col.appendChild(document.createTextNode('; '));
+      }
+      dom.lbTags.appendChild(col);
     }
 
     // Disable arrows at edges
