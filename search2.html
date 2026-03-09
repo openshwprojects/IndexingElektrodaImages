@@ -536,7 +536,8 @@
       const overlay = document.createElement('div');
       overlay.className = 'card-overlay';
       for (const model of models) {
-        const groupTags = (img.taggroups[model] || '').toLowerCase();
+        if (!img.taggroups[model]) continue; // skip models this image has no tags for
+        const groupTags = img.taggroups[model].toLowerCase();
         let isMatch = true;
         if (must.length && !must.every(t => matchesTag(groupTags, t))) isMatch = false;
         if (mustNot.some(t => matchesTag(groupTags, t))) isMatch = false;
