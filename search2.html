@@ -129,6 +129,22 @@
       height: 14px;
       cursor: pointer;
     }
+    .model-family {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid rgba(127,90,240,0.25);
+      border-radius: 8px;
+      padding: 4px 6px;
+      background: rgba(127,90,240,0.05);
+    }
+    .model-family-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #7f5af0;
+      padding: 0 4px;
+      white-space: nowrap;
+    }
 
     .stats-bar {
       margin-top: 10px;
@@ -403,10 +419,29 @@
   // ── State ──
   let data = [];
   let allModels = new Set();
+  let sortedModelsList = [];
   let indexableImages = [];
   let modelUsageCount = {};
   let currentResults = [];
   let lightboxIndex = -1;
+
+  // Sort models: group by base name, sort within group by param size
+  function getModelBaseName(name) {
+    const colonIdx = name.indexOf(':');
+    return colonIdx >= 0 ? name.substring(0, colonIdx).toLowerCase() : name.toLowerCase();
+  }
+  function getModelParamSize(name) {
+    const match = name.match(/:(\d+\.?\d*)b/i);
+    return match ? parseFloat(match[1]) : 9999;
+  }
+  function compareModels(a, b) {
+    const baseA = getModelBaseName(a);
+    const baseB = getModelBaseName(b);
+    // Keep same family together
+    if (baseA !== baseB) return baseA.localeCompare(baseB);
+    // Within same family sort by param size
+    return getModelParamSize(a) - getModelParamSize(b);
+  }
 
   // ── DOM refs ──
   const dom = {
@@ -440,10 +475,13 @@
           modelUsageCount[model] = (modelUsageCount[model] || 0) + 1;
         }
       }
+      sortedModelsList = Array.from(allModels).sort(compareModels);
       renderModelCheckboxes();
       updateGeneralStats();
       dom.loadingIndicator.style.display = 'none';
       applyFilters();
+      // Deep link: open lightbox if URL hash references an image
+      handleHashOnLoad();
     })
     .catch(err => {
       dom.loadingIndicator.innerHTML = `<span style="color:#ff5555">Failed to load work.json: ${err.message}</span>`;
@@ -451,25 +489,53 @@
 
   // ── Model Checkboxes ──
   function renderModelCheckboxes() {
-    const sorted = Array.from(allModels).sort();
     const fragment = document.createDocumentFragment();
     const label = document.createElement('span');
     label.className = 'models-label';
-    label.textContent = 'Models:';
+    label.textContent = 'Include only images that has tags by models:';
     fragment.appendChild(label);
-    for (const model of sorted) {
-      const chip = document.createElement('label');
-      chip.className = 'model-chip';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = true;
-      cb.dataset.model = model;
-      chip.appendChild(cb);
-      chip.appendChild(document.createTextNode(model));
-      fragment.appendChild(chip);
+
+    // Group models by base name to detect families
+    const familyMap = new Map();
+    for (const model of sortedModelsList) {
+      const base = getModelBaseName(model);
+      if (!familyMap.has(base)) familyMap.set(base, []);
+      familyMap.get(base).push(model);
+    }
+
+    for (const [base, members] of familyMap) {
+      if (members.length > 1) {
+        // Wrap family in a rectangle
+        const familyDiv = document.createElement('div');
+        familyDiv.className = 'model-family';
+        const familyLabel = document.createElement('span');
+        familyLabel.className = 'model-family-label';
+        familyLabel.textContent = base;
+        familyDiv.appendChild(familyLabel);
+        for (const model of members) {
+          familyDiv.appendChild(createModelChip(model, true));
+        }
+        fragment.appendChild(familyDiv);
+      } else {
+        fragment.appendChild(createModelChip(members[0], false));
+      }
     }
     dom.modelsRow.innerHTML = '';
     dom.modelsRow.appendChild(fragment);
+  }
+
+  function createModelChip(model, inFamily) {
+    const chip = document.createElement('label');
+    chip.className = 'model-chip';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.model = model;
+    chip.appendChild(cb);
+    // If inside a family, show only the param suffix (e.g. "0.4b")
+    const displayName = inFamily ? model.substring(model.indexOf(':') + 1) : model;
+    chip.appendChild(document.createTextNode(displayName));
+    return chip;
   }
 
   function updateGeneralStats() {
@@ -503,6 +569,8 @@
 
     let matching = [];
     for (const img of indexableImages) {
+      // Require image to have tags from every selected model
+      if (models.length && !models.every(m => img.taggroups[m] && img.taggroups[m].trim() !== '')) continue;
       const allTags = models.map(m => img.taggroups[m] || '').join('; ').toLowerCase();
       if (must.length && !must.every(t => matchesTag(allTags, t))) continue;
       if (mustNot.some(t => matchesTag(allTags, t))) continue;
@@ -558,12 +626,17 @@
     updateLightbox();
     dom.lightbox.classList.add('open');
     document.body.style.overflow = 'hidden';
+    // Update URL hash for deep linking
+    if (lightboxIndex >= 0 && lightboxIndex < currentResults.length) {
+      history.replaceState(null, '', '#img=' + encodeURIComponent(currentResults[lightboxIndex].url));
+    }
   }
 
   function closeLightbox() {
     dom.lightbox.classList.remove('open');
     document.body.style.overflow = '';
     lightboxIndex = -1;
+    history.replaceState(null, '', window.location.pathname + window.location.search);
   }
 
   function updateLightbox() {
@@ -638,6 +711,10 @@
     if (newIdx < 0 || newIdx >= currentResults.length) return;
     lightboxIndex = newIdx;
     updateLightbox();
+    // Update URL hash
+    if (lightboxIndex >= 0 && lightboxIndex < currentResults.length) {
+      history.replaceState(null, '', '#img=' + encodeURIComponent(currentResults[lightboxIndex].url));
+    }
   }
 
   // ── Events ──
@@ -658,6 +735,29 @@
     if (e.key === 'ArrowLeft')  navigateLightbox(-1);
     if (e.key === 'ArrowRight') navigateLightbox( 1);
   });
+
+  // ── Deep Link Handler ──
+  function handleHashOnLoad() {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#img=')) return;
+    const targetUrl = decodeURIComponent(hash.substring(5));
+    // First try to find in current results
+    let idx = currentResults.findIndex(img => img.url === targetUrl);
+    if (idx >= 0) {
+      openLightbox(idx);
+      return;
+    }
+    // If not in current results, find in all indexable images and add to results
+    const img = indexableImages.find(img => img.url === targetUrl) || data.find(img => img.url === targetUrl);
+    if (img) {
+      currentResults.unshift(img);
+      const models = getCheckedModels();
+      const must = dom.mustHave.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const mustNot = dom.mustNotHave.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      renderResults(models, must, mustNot);
+      openLightbox(0);
+    }
+  }
 </script>
 
 </body>
