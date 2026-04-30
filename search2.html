@@ -94,6 +94,31 @@
     }
     .btn-search:active { transform: translateY(0); }
 
+    .prompt-tabs {
+      margin-top: 12px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .prompt-tab {
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: #9999b5;
+      transition: all 0.2s;
+      user-select: none;
+    }
+    .prompt-tab:hover { background: rgba(127,90,240,0.12); border-color: rgba(127,90,240,0.3); }
+    .prompt-tab.active {
+      background: linear-gradient(135deg, #7f5af0, #6b3fd4);
+      color: #fff;
+      border-color: #7f5af0;
+    }
+    .prompt-tab .tab-count { font-size: 0.7rem; opacity: 0.7; margin-left: 4px; }
     .models-row {
       margin-top: 12px;
       display: flex;
@@ -262,31 +287,61 @@
 
     .lb-content {
       display: flex;
-      flex-direction: column;
-      align-items: center;
-      max-width: 85vw;
-      max-height: 90vh;
-      gap: 16px;
+      flex-direction: row;
+      align-items: stretch;
+      width: 90vw;
+      height: 85vh;
+      gap: 24px;
+      justify-content: center;
     }
 
     .lb-img-wrap {
-      flex-shrink: 1;
-      max-height: 72vh;
+      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
+      max-width: 50%;
+      position: relative;
     }
-    .lb-img-wrap img {
-      max-width: 80vw;
-      max-height: 72vh;
+    .lb-img-wrap > a {
+      display: block;
+      position: relative;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .lb-img-wrap > a img {
+      max-width: 100%;
+      max-height: 85vh;
       object-fit: contain;
       border-radius: 8px;
       box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+      display: block;
     }
 
+    .maximize-btn {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      background: rgba(0,0,0,0.75);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      opacity: 0;
+      transition: opacity 0.2s, background 0.2s;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .maximize-btn:hover { background: rgba(127,90,240,0.9); }
+    .lb-img-wrap:hover .maximize-btn { opacity: 1; }
+
     .lb-tags {
-      width: 80vw;
-      max-height: 22vh;
+      flex: 1;
+      max-width: 50%;
+      height: 100%;
       overflow-y: auto;
       background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.08);
@@ -299,6 +354,18 @@
     .lb-tags::-webkit-scrollbar { width: 6px; }
     .lb-tags::-webkit-scrollbar-track { background: transparent; }
     .lb-tags::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+    @media (max-width: 768px) {
+      .lb-content {
+        flex-direction: column;
+        height: auto;
+        max-height: 90vh;
+      }
+      .lb-img-wrap, .lb-tags { max-width: 100%; }
+      .lb-img-wrap { max-height: 50vh; }
+      .lb-img-wrap > a img { max-height: 50vh; }
+      .lb-tags { height: auto; max-height: 40vh; }
+    }
 
     .lb-tag-col {
       font-size: 0.78rem;
@@ -387,6 +454,7 @@
       </div>
       <button type="submit" class="btn-search">Search</button>
     </div>
+    <div class="prompt-tabs" id="promptTabs"></div>
     <div class="models-row" id="modelsRow">
       <span class="models-label">Models:</span>
     </div>
@@ -408,7 +476,10 @@
     <button class="lb-nav lb-next" id="lbNext" title="Next (→)">›</button>
     <div class="lb-content">
       <div class="lb-img-wrap">
-        <img id="lbImg" src="" alt="">
+        <a id="lbImgLink" href="" target="_blank" title="View Full Size">
+          <img id="lbImg" src="" alt="">
+          <div class="maximize-btn">⛶ Maximize</div>
+        </a>
       </div>
       <div class="lb-tags" id="lbTags"></div>
     </div>
@@ -424,6 +495,17 @@
   let modelUsageCount = {};
   let currentResults = [];
   let lightboxIndex = -1;
+  let activePromptType = 'tags';
+  let promptTypesInfo = {}; // { codeName: { count, models: Set } }
+
+  // ── Compatibility: extract taggroups for a prompt type ──
+  function getTaggroups(img, promptType) {
+    if (img.prompts) {
+      const p = img.prompts.find(x => x.codeName === promptType);
+      return p ? p.taggroups : {};
+    }
+    return img.taggroups || {};
+  }
 
   // Sort models: group by base name, sort within group by param size
   function getModelBaseName(name) {
@@ -432,7 +514,7 @@
   }
   function getModelParamSize(name) {
     const match = name.match(/:(\d+\.?\d*)b/i);
-    return match ? parseFloat(match[1]) : 9999;
+    return match ? parseFloat(match[1]) : 0;
   }
   function compareModels(a, b) {
     const baseA = getModelBaseName(a);
@@ -445,6 +527,7 @@
 
   // ── DOM refs ──
   const dom = {
+    promptTabs:       document.getElementById('promptTabs'),
     generalStats:     document.getElementById('generalStats'),
     modelsRow:        document.getElementById('modelsRow'),
     searchStats:      document.getElementById('searchStats'),
@@ -455,6 +538,7 @@
     resultCount:      document.getElementById('resultCount'),
     searchForm:       document.getElementById('searchForm'),
     lightbox:         document.getElementById('lightbox'),
+    lbImgLink:        document.getElementById('lbImgLink'),
     lbImg:            document.getElementById('lbImg'),
     lbTags:           document.getElementById('lbTags'),
     lbCounter:        document.getElementById('lbCounter'),
@@ -468,24 +552,60 @@
     .then(r => r.json())
     .then(json => {
       data = json.images || [];
-      indexableImages = data.filter(img => img.taggroups && Object.keys(img.taggroups).length > 0);
-      for (const img of indexableImages) {
-        for (const model in img.taggroups) {
-          allModels.add(model);
-          modelUsageCount[model] = (modelUsageCount[model] || 0) + 1;
+      // Discover prompt types
+      for (const img of data) {
+        if (img.prompts) {
+          for (const p of img.prompts) {
+            if (!promptTypesInfo[p.codeName]) promptTypesInfo[p.codeName] = { count: 0, models: new Set() };
+            promptTypesInfo[p.codeName].count++;
+            for (const m in p.taggroups) promptTypesInfo[p.codeName].models.add(m);
+          }
+        } else if (img.taggroups) {
+          if (!promptTypesInfo['tags']) promptTypesInfo['tags'] = { count: 0, models: new Set() };
+          promptTypesInfo['tags'].count++;
+          for (const m in img.taggroups) promptTypesInfo['tags'].models.add(m);
         }
       }
-      sortedModelsList = Array.from(allModels).sort(compareModels);
-      renderModelCheckboxes();
-      updateGeneralStats();
+      activePromptType = Object.keys(promptTypesInfo)[0] || 'tags';
+      renderPromptTabs();
+      rebuildForPromptType();
       dom.loadingIndicator.style.display = 'none';
       applyFilters();
-      // Deep link: open lightbox if URL hash references an image
       handleHashOnLoad();
     })
     .catch(err => {
       dom.loadingIndicator.innerHTML = `<span style="color:#ff5555">Failed to load work.json: ${err.message}</span>`;
     });
+
+  function renderPromptTabs() {
+    dom.promptTabs.innerHTML = '';
+    for (const [name, info] of Object.entries(promptTypesInfo)) {
+      const tab = document.createElement('span');
+      tab.className = 'prompt-tab' + (name === activePromptType ? ' active' : '');
+      tab.innerHTML = `${name} <span class="tab-count">(${info.count})</span>`;
+      tab.onclick = () => { activePromptType = name; renderPromptTabs(); rebuildForPromptType(); applyFilters(); };
+      dom.promptTabs.appendChild(tab);
+    }
+  }
+
+  function rebuildForPromptType() {
+    allModels = new Set();
+    modelUsageCount = {};
+    indexableImages = data.filter(img => {
+      const tg = getTaggroups(img, activePromptType);
+      return tg && Object.keys(tg).length > 0;
+    });
+    for (const img of indexableImages) {
+      const tg = getTaggroups(img, activePromptType);
+      for (const model in tg) {
+        allModels.add(model);
+        modelUsageCount[model] = (modelUsageCount[model] || 0) + 1;
+      }
+    }
+    sortedModelsList = Array.from(allModels).sort(compareModels);
+    renderModelCheckboxes();
+    updateGeneralStats();
+  }
 
   // ── Model Checkboxes ──
   function renderModelCheckboxes() {
@@ -529,8 +649,9 @@
     chip.className = 'model-chip';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.checked = true;
     cb.dataset.model = model;
+    const size = getModelParamSize(model);
+    cb.checked = (size <= 4);
     chip.appendChild(cb);
     // If inside a family, show only the param suffix (e.g. "0.4b")
     const displayName = inFamily ? model.substring(model.indexOf(':') + 1) : model;
@@ -541,7 +662,7 @@
   function updateGeneralStats() {
     const total = data.length;
     const indexable = indexableImages.length;
-    const totalTags = indexableImages.reduce((s, img) => s + Object.keys(img.taggroups).length, 0);
+    const totalTags = indexableImages.reduce((s, img) => s + Object.keys(getTaggroups(img, activePromptType)).length, 0);
     const modelInfo = Object.entries(modelUsageCount)
       .sort((a, b) => b[1] - a[1])
       .map(([m, c]) => `${m}: ${c}`)
@@ -569,9 +690,10 @@
 
     let matching = [];
     for (const img of indexableImages) {
+      const tg = getTaggroups(img, activePromptType);
       // Require image to have tags from every selected model
-      if (models.length && !models.every(m => img.taggroups[m] && img.taggroups[m].trim() !== '')) continue;
-      const allTags = models.map(m => img.taggroups[m] || '').join('; ').toLowerCase();
+      if (models.length && !models.every(m => tg[m] && tg[m].trim() !== '')) continue;
+      const allTags = models.map(m => tg[m] || '').join('; ').toLowerCase();
       if (must.length && !must.every(t => matchesTag(allTags, t))) continue;
       if (mustNot.some(t => matchesTag(allTags, t))) continue;
       matching.push(img);
@@ -603,9 +725,10 @@
 
       const overlay = document.createElement('div');
       overlay.className = 'card-overlay';
+      const tg = getTaggroups(img, activePromptType);
       for (const model of models) {
-        if (!img.taggroups[model]) continue; // skip models this image has no tags for
-        const groupTags = img.taggroups[model].toLowerCase();
+        if (!tg[model]) continue;
+        const groupTags = tg[model].toLowerCase();
         let isMatch = true;
         if (must.length && !must.every(t => matchesTag(groupTags, t))) isMatch = false;
         if (mustNot.some(t => matchesTag(groupTags, t))) isMatch = false;
@@ -644,34 +767,30 @@
     const img = currentResults[lightboxIndex];
     const models = getCheckedModels();
 
+    dom.lbImgLink.href = img.url;
     dom.lbImg.src = img.url;
     dom.lbCounter.textContent = `${lightboxIndex + 1} / ${currentResults.length}`;
 
-    // Parse tags per model and count cross-model frequency
-    const activeModels = models.filter(m => img.taggroups[m]);
+    // Show all prompt types in lightbox
+    const tg = getTaggroups(img, activePromptType);
+    const activeModels = models.filter(m => tg[m]);
     const totalModels = activeModels.length;
 
-    // Normalize: split by ; or , or \n, trim, lowercase
     function parseTags(str) {
       return str.split(/[;,\n]+/).map(t => t.trim()).filter(Boolean);
     }
     function normTag(t) { return t.toLowerCase().replace(/\s+/g, ' '); }
 
-    // Count how many models contain each normalized tag
     const tagModelCount = {};
     for (const model of activeModels) {
-      const tags = parseTags(img.taggroups[model]);
+      const tags = parseTags(tg[model]);
       const seen = new Set();
       for (const t of tags) {
         const key = normTag(t);
-        if (!seen.has(key)) {
-          seen.add(key);
-          tagModelCount[key] = (tagModelCount[key] || 0) + 1;
-        }
+        if (!seen.has(key)) { seen.add(key); tagModelCount[key] = (tagModelCount[key] || 0) + 1; }
       }
     }
 
-    // Determine CSS class for a tag based on how many models share it
     function tagClass(count) {
       if (count >= totalModels) return 'tag-freq-all';
       if (count >= totalModels - 1 && totalModels >= 2) return 'tag-freq-almost';
@@ -680,8 +799,8 @@
       return 'tag-freq-neutral';
     }
 
-    // Build tag columns with colored individual tags
     dom.lbTags.innerHTML = '';
+    // Show current prompt type tags
     for (const model of activeModels) {
       const col = document.createElement('div');
       col.className = 'lb-tag-col';
@@ -689,8 +808,7 @@
       nameSpan.className = 'model-name';
       nameSpan.textContent = model;
       col.appendChild(nameSpan);
-
-      const tags = parseTags(img.taggroups[model]);
+      const tags = parseTags(tg[model]);
       for (let i = 0; i < tags.length; i++) {
         const span = document.createElement('span');
         span.className = tagClass(tagModelCount[normTag(tags[i])]);
@@ -700,7 +818,6 @@
       }
       dom.lbTags.appendChild(col);
     }
-
     // Disable arrows at edges
     dom.lbPrev.style.visibility = lightboxIndex > 0 ? 'visible' : 'hidden';
     dom.lbNext.style.visibility = lightboxIndex < currentResults.length - 1 ? 'visible' : 'hidden';
